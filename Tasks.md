@@ -17,14 +17,6 @@ What is the relationship between NLP and the concepts you have learned in the Sp
 
 
 ## Task 1 : Getting and Cleaning the Data  
-The goal of this task is to get familiar with the databases and do the necessary cleaning. After this exercise, you should understand 
-what real data looks like and how much effort you need to put into cleaning the data. When you commence on developing a new language, 
-the first thing is to understand the language and its peculiarities with respect to your target. You can learn to read, speak and write 
-the language. Alternatively, you can study data and learn from existing information about the language through literature and the 
-internet. At the very least, you need to understand how the language is written: writing script, existing input methods, some phonetic 
-knowledge, etc.  
-Note that the data contain words of offensive and profane meaning. They are left there intentionally to highlight the fact that the 
-developer has to work on them.  
 ### Tasks to accomplish  
 Tokenization - identifying appropriate tokens such as words, punctuation, and numbers. Writing a function that takes a file as input and 
 returns a tokenized version of it.  
