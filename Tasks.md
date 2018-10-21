@@ -37,8 +37,6 @@ Can you think of a way to increase the coverage -- identifying words that may no
 in the dictionary to cover the same number of phrases?  
 
 ## Task 3 : Modelling
-The goal here is to build your first simple model for the relationship between words. This is the first step in building a predictive 
-text mining application. You will explore simple models and discover more complicated modeling techniques.
 ### Tasks to accomplish
 Build basic n-gram model - using the exploratory analysis you performed, build a basic n-gram model for predicting the next word based 
 on the previous 1, 2, or 3 words.  
