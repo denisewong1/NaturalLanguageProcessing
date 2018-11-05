@@ -1,0 +1,465 @@
+---
+title: 'Exploratory NLP Data Analysis for Predictive Text Algorithm'
+author: "Denise Wong"
+date: "25 October 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+\  
+  
+### Executive Summary  
+This report summarises the exploratory data analysis conducted on the dataset provided for the [JHU Data Science Capstone Project](https://www.coursera.org/learn/data-science-project).  The raw data has been downloaded and zipped locally from https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip.   
+\    
+The data comprises 3 texts files (news articles, tweets and blogs) in 4 languages (English, German, Finnish and Russian).  The objective of the project is to produce a predictive text algorithm based on the data set provided.  The analysis for this report focusses on the English text files.  The resulting algorithm will be embedded in a web app using Shiny.  
+\   
+The bulk of the text mining operations used the quanteda library which, after much experimentation, is faster than the tm library functions.  The process for transforming the text into a usable dictionary in quanteda is as follows :  
+     text -> corpus -> tokens -> ngrams -> dfm -> dictionary  
+\     
+The process and analysis is described below.  Full code for running this reproducible analysis can be found at the end of the document.  
+\    
+    
+### Setting up the Environment  
+The following code loads the required libraries, sets up the working directories and initial arrays containing file information.  
+```{r message = FALSE, echo = TRUE}
+    library(tm); library(readr); library(stringi); library(ggplot2)
+    library(SnowballC); library(quanteda); library(RColorBrewer)
+    
+    setwd("~/DataScience/CapstoneJHU")
+    dirData <- "~/DataScience/CapstoneJHU/data/"
+    
+    lstLanguage <- c("de_DE","en_US","fi_FI","ru_RU")
+    lstDoctype <- c(".blogs",".news",".twitter")
+    lstFileDE <- c("de_DE.blogs","de_DE.news","de_DE.twitter")
+    lstFileEN <- c("en_US.blogs","en_US.news","en_US.twitter")
+    lstFileFI <- c("fi_FI.blogs","fi_FI.news","fi_FI.twitter")
+    lstFileRU <- c("ru_RU.blogs","ru_RU.news","ru_RU.twitter")
+```
+\  
+  
+### Reading the Text Files    
+For the English language analysis, there is over 3 million lines of text to be analysed.  The size and contents of the first line of each file is shown below.  
+```{r}
+    getFilename <- function(tDir,tLanguage,tDocName,tExtension) {
+        tDir <- paste(tDir,tLanguage,"/",sep="")
+        tFilename <-paste(tDir,tDocName,tExtension,sep="")
+        tFilename }
+    
+    readTextFile <- function(tDir,tLanguage,tDocName) {
+        fileData <-getFilename(tDir,tLanguage,tDocName,".txt")
+        tData <- scan(file = fileData,sep = '\n', what = '', skipNul = TRUE)
+        print(fileData)
+        print(stri_stats_general(tData)) ## lines of data
+        tData }
+    
+    tDir <- dirData
+    tLanguage <- "en_US"
+    tDocName <- tLanguage
+    a1 <- readTextFile(tDir,tLanguage,lstFileEN[1])
+    a1[1]
+    a2 <- readTextFile(tDir,tLanguage,lstFileEN[2])
+    a2[1]
+    a3 <- readTextFile(tDir,tLanguage,lstFileEN[3])  
+    a3[1]
+```
+\   
+      
+### Converting the text file to a corpus  
+A corpus is designed to be a library of documents that have been converted to standardised text.  It is intended to be a static container of original reference texts.
+\  
+In this step we also load the bad word list which has been saved locally from https://www.cs.cmu.edu/~biglou/resources/.  The processing will remove the profanity from the original text.  
+```{r message = FALSE}
+    fileProfanity <-getFilename("data","","bad-words",".txt")
+    lstProfanity <- scan(file=fileProfanity,sep = '\n',what= '',skipNul=TRUE)
+```
+\
+To enable faster processing, a random sample of 20% of the text is read.  The data is preprocessed slightly prior to being converted to a corpus. The initial text preprocessing speeds up the later tokenisation process.  It also performs operations which are not available within the quanteda library. This includes  
+* removing html style tags  
+* removing urls  
+* removing twitter hashtags (not done well in quanteda)  
+* removing non-alphanumeric characters  
+```{r echo = TRUE}
+    preprocessText <- function(tData) {
+        tSample <- 0.20 
+        tData <- sample(tData,length(tData)*tSample,replace=FALSE)   
+        tData <- gsub("<.*?>", "", tData)            ## remove html style tags
+        a <- iconv(tData,to="ASCII") ## from="UTF-8",
+        a <- gsub("(https?)?://[^[:blank:]]*", " ",a) ## remove urls
+        a <- gsub("[[:blank:]]#[^[:blank:]]*", " ",a) ## remove hashtags
+        a <- gsub("[[:digit:]]","",a)
+        a <- gsub("[[:punct:]]","",a)
+        a <- gsub("^[:alphanum:][:space:]"," ",a)
+        corpus(a) }
+    
+    a1 <- preprocessText(a1)
+    a2 <- preprocessText(a2)
+    a3 <- preprocessText(a2)
+    x <- a1 + a2 + a3
+    saveRDS(x,getFilename(tDir,tLanguage,tDocName,".train.rds"))  
+```
+\  
+  
+### Converting corpus to tokens  
+The corpus is converted into a token dataset using quanteda and saved to an .rds file.  This process of tokenising cleans the text and extracts the unique features (words or terms) of the documents.
+\  
+The second round of preprocessing  
+* removes punctuation   
+* removes numbers  
+* removes symbols  
+* removes stopwords (eg "to", "the", "and", etc)    
+* twitter hashtags  
+* removes hyphens  
+* removes any profanity  
+```{r echo = TRUE}
+    x <-tokens(x,remove_punct=TRUE, remove_numbers=TRUE, 
+        remove_symbols=TRUE, remove_twitter=TRUE, remove_hyphens=TRUE,
+        include_docvars=FALSE, what = "word")
+    x <-tokens_remove(x,stopwords(substr(tLanguage,1,2)))
+    x <-tokens_remove(x,lstProfanity)
+    saveRDS(x,getFilename(tDir,tLanguage,tDocName,".token.rds"))
+```
+\  
+  
+### Converting tokens to n-grams  
+In [Natural Language Processing](https://en.wikipedia.org/wiki/Natural_language_processing) (NLP), an n-gram is a sequence of n items from a given text.  The [n-grams](https://en.wikipedia.org/wiki/N-gram) are constructed by first tokenising the text.   
+```{r echo = TRUE, message = FALSE}
+    readTokenFile <- function(tDir,tLanguage) {
+        tDocName <- tLanguage
+        fileRDS <-getFilename(tDir,tLanguage,tDocName,".token.rds")
+        a <- readRDS(fileRDS)
+        a } 
+    getNgram <- function(x,n,nskip,tDir,tLanguage,tExtension) {
+        xgram <- tokens_ngrams(x,n,nskip,concatenator=" ")
+        saveRDS(xgram,getFilename(tDir,tLanguage,"token",tExtension)) 
+        rm(xgram) }  
+    
+    x <- readTokenFile(tDir,tLanguage)
+    getNgram(x,n=1L,nskip=0L,tDir,tLanguage,".x1gram.rds")
+    getNgram(x,n=2L,nskip=0L,tDir,tLanguage,".x2gram.rds")
+    getNgram(x,n=3L,nskip=0L,tDir,tLanguage,".x3gram.rds")
+    getNgram(x,n=2L,nskip=1L,tDir,tLanguage,".x1skip.rds")
+```
+\  
+  
+### Converting the n-grams to a document frequency matrix  
+The n-grams are then converted to a document frequency matrix (dfm).  A document frequency matrix is a table which contains the unique tokens (features) and their total counts within the corpus.
+```{r echo = TRUE}
+    readNgramFile <- function(tDir,tLanguage,tExtension) {
+        tDocName <- tLanguage
+        fileRDS <-getFilename(tDir,tLanguage,"token",tExtension)
+        a <- readRDS(fileRDS)
+        a }    
+    getdfm <- function(tDir,tLanguage,tExtension) {
+        x <- readNgramFile(tDir,tLanguage,tExtension)
+        xdfm <- dfm(x)
+        xdfm <- dfm_sort(xdfm,decreasing=TRUE,margin="features")
+        saveRDS(xdfm,getFilename(tDir,tLanguage,"dfm",tExtension))
+        xdfm } 
+    
+    x.1skip <- getdfm(tDir,tLanguage,".x1skip.rds")
+    x.1gram <- getdfm(tDir,tLanguage,".x1gram.rds")
+    x.2gram <- getdfm(tDir,tLanguage,".x2gram.rds")
+    x.3gram <- getdfm(tDir,tLanguage,".x3gram.rds")
+```
+\  
+  
+### Unigram Analysis  
+The most common unigrams and their absolute & relative frequencies are shown below.  When this analysis is conducted using stopwords, the top 15 unigrams are stopwords.  The analysis below excludes stopwords.  
+```{r}
+    print(topfeatures(x.1gram,n=25))
+    textplot_wordcloud(x.1gram,max_words=100,color=brewer.pal(6,"Dark2"))
+```
+\       
+The coverage or cumulative percentage of words which covers the text is shown in the table below.  The chart and table below shows that less than 15% of the unigrams account for 90% of the words in the corpus. 
+```{r}
+    xgram <- x.1gram
+    tblgram <- textstat_frequency(xgram)
+    tblgram <- data.frame(tblgram, 
+        cumfreq = cumsum(tblgram$frequency)/sum(tblgram$frequency),
+        length=nchar(tblgram$feature))
+    tblgram2 <- data.frame(coverage = 1:10)
+    tblgram2$coverage <- tblgram2$coverage/10
+        cumfreq <- sapply(tblgram2$coverage, function(x)
+        length(which(tblgram$cumfreq<=x)))
+    cumfreqpct <- cumfreq/NROW(tblgram$freq)
+    tblgram2 <- cbind(tblgram2,cumfreq,cumfreqpct)
+    print(tblgram2) 
+    ggplot(tblgram2,aes(cumfreqpct,coverage))+geom_line()
+```
+\  
+  
+### Bigram Analysis  
+The most common bigrams and their relative frequencies are shown below.  
+```{r echo = FALSE}
+    print(attr(topfeatures(x.2gram,n=25),"names"))
+    textplot_wordcloud(x.2gram,max_words=30,color=brewer.pal(6,"Dark2"))
+```
+\    
+There are many bigrams (about 85%) which only occur once in the text.  These low frequency bigrams will be pruned out when creating the dictionary for the algorithm.   
+```{r}
+    xgram <- x.2gram    
+    tblgram <- textstat_frequency(xgram)
+    tblgram <- data.frame(tblgram, 
+        cumfreq = cumsum(tblgram$frequency)/sum(tblgram$frequency),
+        length=nchar(tblgram$feature))
+    tblgram3 <- data.frame(freqcount = 1:10)
+        featcount <- sapply(tblgram3$freqcount, function(x)
+        length(which(tblgram$freq==x)))
+    featfreq <- cumsum(featcount)/NROW(tblgram$freq)
+    tblgram3 <- cbind(tblgram3,featcount,featfreq)
+    print(tblgram3)
+```
+\  
+  
+### Trigram Analysis  
+The most common trigrams are shown below.
+```{r message = FALSE, echo = FALSE}
+    print(attr(topfeatures(x.3gram,n=20),"names"))
+```
+\   
+As with bigrams, there is a high incidence of trigrams which occur less than 5 times within the corpus analysed.  Additionally, the number of features observed multiplies significantly as the number n in n-grams increases, resulting in larger data sets.    
+
+```{r echo = FALSE}
+    xgram <- x.3gram    
+    tblgram <- textstat_frequency(xgram)
+    tblgram <- data.frame(tblgram, 
+        cumfreq = cumsum(tblgram$frequency)/sum(tblgram$frequency),
+        length=nchar(tblgram$feature))
+    tblgram3 <- data.frame(freqcount = 1:10)
+        featcount <- sapply(tblgram3$freqcount, function(x)
+        length(which(tblgram$freq==x)))
+    featfreq <- cumsum(featcount)/NROW(tblgram$freq)
+    tblgram3 <- cbind(tblgram3,featcount,featfreq)
+    print(tblgram3)
+```
+\  
+
+### Skipgram Analysis  
+The most common 1-skipgrams and their relative frequencies are shown below. A skipgram is a sequence of words where x number of words in between are removed.  For this analysis, the middle word in a trigram has been removed to create a 1-skipgram.  
+```{r message = FALSE, echo = FALSE}
+    print(attr(topfeatures(xgram,n=25),"names"))  
+```
+\  
+
+### Observations and Further Analysis  
+The exploratory data analysis (EDA) provides a framework for understanding the data. One of the approaches used in the EDA was to save down the results at key points of transforming the data due to the high memory usage.  In all, the EDA performed above took around 10 minutes to run.  
+\    
+Considerations for building the dictionary for the next stage of the predictive text model include how to -  
+* trim the n-grams and determine the appropriate dictionary size which balances the tradeoff between prediction speed and accuracy based on the coverage and frequency of the n-grams in the text   
+* determine if 4+-grams add additional accuracy to the prediction  
+* determine the weight of contribution of news articles vs blogs vs tweets to the accuracy of the overall model, to match the informal text typing style expected for predictive text  
+* consider model accuracy of including stop words and using stemming in creating the n-gram dictionary
+
+\  
+After the dictionaries have been created, the likely approach to assessing the next word will based on the following set of rules -  
+* if there are more than 2 words, prediction will be based on 3, 4-gram windows  
+* if there are 2 words, prediction will be based on 2, 3 and 4-grams windows  
+* if there is 1 word, prediction will be based on 2, 3-gram windows  
+* during the typing of any word, the prediction and text correction will use unigrams
+
+\  
+Issues to consider when building the algorithm include how to -  
+* calculate the next word probabilities for each n-gram in the dictionary and investigate the Katz Backoff model, Naive Bayes and other NLP algorithms  
+* build training and test datasets to assess and validate the accuracy of next word prediction  
+* investigate likelihood of typing errors and how it affects next word prediction  
+* investigate using tfidf of each n-gram when the modelling probabilities  
+\   
+I will also need to observe existing predictive text models (eg on mobile phones and Google) in order to design the front end of the Shiny app.  For example, predictive text within the iPhone message app returns the top 3 choices.  
+\   
+     
+### References  
+1. Creating dfm step by step with quanteda https://stackoverflow.com/questions/38931507/create-dfm-step-by-step-with-quanteda  
+2. Quanteda Package https://cran.r-project.org/web/packages/quanteda/quanteda.pdf 
+3. Introduction to quantitative text analysis using quanteda  https://tutorials.quanteda.io/introduction/  
+4. Working with Textual Data   http://kenbenoit.net/assets/courses/dmslTCD2015/Days5-6_Exercise.html  
+5. Natural Language Corpus Data : Beautiful Data  http://norvig.com/ngrams/ 
+6. R Programming/Text Processing    https://en.wikibooks.org/wiki/R_Programming/Text_Processing#Comparing_two_strings 
+7. A closer look at skip-gram modelling  http://homepages.inf.ed.ac.uk/ballison/pdf/lrec_skipgrams.pdf  
+8. Quanteda Quick Start Guide https://cran.r-project.org/web/packages/quanteda/vignettes/quickstart.html    
+\  
+   
+### Code   
+The full reproducible code for running the above processes is as follows :  
+  
+```{r echo = TRUE, eval = FALSE}
+    library(tm); library(readr); library(stringi); library(ggplot2)
+    library(SnowballC); library(quanteda); library(RColorBrewer)
+    
+    setwd("~/DataScience/CapstoneJHU")
+    dirData <- "~/DataScience/CapstoneJHU/data/"
+    
+    lstLanguage <- c("de_DE","en_US","fi_FI","ru_RU")
+    lstDoctype <- c(".blogs",".news",".twitter")
+    lstFileDE <- c("de_DE.blogs","de_DE.news","de_DE.twitter")
+    lstFileEN <- c("en_US.blogs","en_US.news","en_US.twitter")
+    lstFileFI <- c("fi_FI.blogs","fi_FI.news","fi_FI.twitter")
+    lstFileRU <- c("ru_RU.blogs","ru_RU.news","ru_RU.twitter")
+    
+
+## -------------------------------------------------------------------------
+## FUNCTIONS TO READ FILES
+## -------------------------------------------------------------------------
+
+    getFilename <- function(tDir,tLanguage,tDocName,tExtension) {
+        tDir <- paste(tDir,tLanguage,"/",sep="")
+        tFilename <-paste(tDir,tDocName,tExtension,sep="")
+        tFilename }
+    
+    ## read text File, print no of lines, return data
+    readTextFile <- function(tDir,tLanguage,tDocName) {
+        fileData <-getFilename(tDir,tLanguage,tDocName,".txt")
+        tData <- scan(file = fileData,sep = '\n', what = '', skipNul = TRUE)
+        print(fileData)
+        print(stri_stats_general(tData)) ## lines of data
+        tData }
+
+    ## read Token file
+    readTokenFile <- function(tDir,tLanguage) {
+        tDocName <- tLanguage
+        fileRDS <-getFilename(tDir,tLanguage,tDocName,".token.rds")
+        a <- readRDS(fileRDS)
+        a }     
+
+    ## read ngram file
+    readNgramFile <- function(tDir,tLanguage,tExtension) {
+        tDocName <- tLanguage
+        fileRDS <-getFilename(tDir,tLanguage,"token",tExtension)
+        a <- readRDS(fileRDS)
+        a }   
+    
+    
+## --------------------------------------------------------------------------
+## PROCESSING FUNCTIONS FOR TEXT TO CORPUS
+## --------------------------------------------------------------------------  
+    ## convert text to corpus in quanteda and sample x% of data
+    preprocessText <- function(tData) {
+        tSample <- 0.20  ## sample 20% of the data
+        tData <- sample(tData,length(tData)*tSample,replace=FALSE)   
+        tData <- gsub("<.*?>", "", tData) ## remove html style tags
+        a <- iconv(tData,to="ASCII") ## from="UTF-8",
+        a <- gsub("(https?)?://[^[:blank:]]*", " ",a) ## remove urls
+        a <- gsub("[[:blank:]]#[^[:blank:]]*", " ",a) ## remove hashtags
+        a <- gsub("[[:digit:]]","",a)
+        a <- gsub("[[:punct:]]","",a)
+        a <- gsub("^[:alphanum:][:space:]"," ",a)
+        corpus(a) }
+    
+
+## --------------------------------------------------------------------------
+## PROCESSING FUNCTIONS FOR CORPUS TO TOKENS
+## --------------------------------------------------------------------------  
+    ## reads corpus, preprocessing and tokenising
+    tokenText <- function(tDir,tLanguage,lstFile) {
+        ## read text file and preprocess
+        tDocName <- tLanguage
+        a1 <- readTextFile(tDir,tLanguage,lstFile[1])
+        a2 <- readTextFile(tDir,tLanguage,lstFile[2])
+        a3 <- readTextFile(tDir,tLanguage,lstFile[3])
+        a1 <- preprocessText(a1)
+        a2 <- preprocessText(a2)
+        a3 <- preprocessText(a3)
+        x <- a1 + a2 + a3
+        saveRDS(x,getFilename(tDir,tLanguage,tDocName,".corpus.rds"))
+        ## make tokens
+        x <-tokens(x,remove_punct=TRUE, remove_numbers=TRUE, 
+            remove_symbols=TRUE, remove_twitter=TRUE, remove_hyphens=TRUE,
+            include_docvars=FALSE, what = "word")
+        ## x <-tokens_remove(x,stopwords(substr(tLanguage,1,2)))
+        x <-tokens(x,what="fasterword",remove_url=TRUE)
+        x <-tokens_remove(x,lstProfanity)
+        saveRDS(x,getFilename(tDir,tLanguage,tDocName,".token.rds"))
+        x }
+
+    
+## --------------------------------------------------------------------------
+## PROCESSING FUNCTIONS FOR TOKENS TO NGRAMS
+## -------------------------------------------------------------------------- 
+    ## calculate n-grams from tokens
+    getNgram <- function(x,n,nskip,tDir,tLanguage,tExtension) {
+        xgram <- tokens_ngrams(x,n,nskip,concatenator=" ")
+        saveRDS(xgram,getFilename(tDir,tLanguage,"token",tExtension)) 
+        rm(xgram) }        
+    
+    ## convert tokens to ngrams, creates x.ngram file
+    ngramToken <- function(tDir, tLanguage) {
+        x <- readTokenFile(tDir,tLanguage)
+        getNgram(x,n=1L,nskip=0L,tDir,tLanguage,".x1gram.rds")
+        getNgram(x,n=2L,nskip=0L,tDir,tLanguage,".x2gram.rds")
+        getNgram(x,n=3L,nskip=0L,tDir,tLanguage,".x3gram.rds")
+        getNgram(x,n=2L,nskip=1L,tDir,tLanguage,".x1skip.rds")
+        rm(x)
+    }
+
+            
+## --------------------------------------------------------------------------
+## PROCESSING FUNCTIONS FOR NGRAMS TO DFM
+## -------------------------------------------------------------------------- 
+    ## coverage by number of features - only works on dfm objects
+    ngramCoverage <- function(xgram,n) {
+        word cloud and top words
+        textplot_wordcloud(xgram,max_words=60/n,color=brewer.pal(6,"Dark2"))
+        print(topfeatures(xgram,n=25))
+        ## word frequency table
+        tblgram <- textstat_frequency(xgram)
+        tblgram <- data.frame(tblgram, 
+            cumfreq = cumsum(tblgram$frequency)/sum(tblgram$frequency),
+            length=nchar(tblgram$feature))
+        ## print(mean(tblgram$length))
+        ## for x% coverage of text, cumfreq of features as abs and % of corpus
+        tblgram2 <- data.frame(coverage = 1:10)
+        tblgram2$coverage <- tblgram2$coverage/10
+        cumfreq <- sapply(tblgram2$coverage, function(x)
+            length(which(tblgram$cumfreq<=x)))
+        cumfreqpct <- cumfreq/NROW(tblgram$freq)
+        tblgram2 <- cbind(tblgram2,cumfreq,cumfreqpct)
+        print(tblgram2) 
+        ## ggplot(tblgram2,aes(cumfreqpct,coverage))+geom_line()
+        ## count of features which appear x times in corpus
+        tblgram3 <- data.frame(freqcount = 1:10)
+        featcount <- sapply(tblgram3$freqcount, function(x)
+            length(which(tblgram$freq==x)))
+        featfreq <- cumsum(featcount)/NROW(tblgram$freq)
+        tblgram3 <- cbind(tblgram3,featcount,featfreq)
+        print(tblgram3)
+        rm(tblgram, tblgram2,tblgram3) }
+    
+    ## calculate dfm from ngrams
+    getdfm <- function(tDir,tLanguage,tExtension) {
+        x <- readNgramFile(tDir,tLanguage,tExtension)
+        xdfm <- dfm(x)
+        xdfm <- dfm_sort(xdfm,decreasing=TRUE,margin="features")
+        saveRDS(xdfm,getFilename(tDir,tLanguage,"dfm",tExtension))
+        xdfm }     
+
+    ## convert ngrams to dfm, trim and create dfm file
+    dfmNgram <- function(tDir, tLanguage) {
+        getdfm(tDir,tLanguage,".x1skip.rds")
+        getdfm(tDir,tLanguage,".x1gram.rds")
+        getdfm(tDir,tLanguage,".x2gram.rds")
+        getdfm(tDir,tLanguage,".x3gram.rds")
+
+    
+## --------------------------------------------------------------------------
+## REAL CODE STARTS HERE
+## --------------------------------------------------------------------------
+## bad word list https://www.cs.cmu.edu/~biglou/resources/
+    fileProfanity <- getFilename("data","","bad-words",".txt")
+    lstProfanity <- scan(file=fileProfanity,sep ='\n',what='',skipNul=TRUE) 
+    
+    ## en_US
+    ## tokenText : convert text to tokens; creates .corpus and .token file
+    system.time(tokenEN <- tokenText(dirData,"en_US",lstFileEN))
+    
+    ## ngramToken : convert tokens to ngrams, creates x.ngram file
+    system.time(ngramEN <- ngramToken(dirData,"en_US"))
+    
+    ## dfmNgram : convert ngrams to dfm, create dfm file
+    system.time(dfmEN <- dfmNgram(dirData,"en_US"))
+
+```
+
+
+
+
